@@ -11,7 +11,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
 <style>
-/* Layout: scoreboard ticket stack — summary strip on top, one card per parlay, one row per leg. */
+/* Layout: scoreboard ticket stack — one collapsible card per parlay (header = summary), one row per leg. */
 :root {
   --bg: #eceff3; --surface: #ffffff; --surface-2: #f4f6f9; --ink: #131c26; --muted: #5a6776; --line: #d8dee6;
   --accent: #c77b00; --win: #18884a; --win-bg: #e3f4ea; --lose: #c93838; --lose-bg: #fbe7e7; --tie: #8a6d00; --tie-bg: #fbf2d6;
@@ -50,13 +50,6 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @keyframes pulse { 50% { opacity: .25; } }
 @media (prefers-reduced-motion: reduce) { .dot.on { animation: none; } }
 
-.summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.sum { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: grid; gap: 4px; text-decoration: none; color: inherit; }
-.sum .label { font: 600 12px var(--body); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
-.sum .big { font: 700 26px/1 var(--display); }
-.sum .sub { font-size: 12px; color: var(--muted); }
-@media (max-width: 520px) { .summary { grid-template-columns: 1fr; } .sum { grid-template-columns: 1fr auto; align-items: center; } .sum .sub { grid-column: 1 / -1; } }
-
 .pill { font: 700 12px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; padding: 5px 8px 4px; border-radius: 4px; white-space: nowrap; }
 .pill.live { background: var(--accent); color: var(--bg); }
 .pill.pending { background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
@@ -65,8 +58,18 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .parlay { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
 .parlay.dead .leg { opacity: .55; }
+summary.phead { list-style: none; cursor: pointer; }
+summary.phead::-webkit-details-marker { display: none; }
+summary.phead:hover .ptitle { color: var(--accent); }
+summary.phead:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.parlay:not([open]) .phead { border-bottom: 0; }
+.right { display: flex; align-items: center; gap: 10px; }
+.chev { width: 9px; height: 9px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg) translateY(-3px); transition: transform .2s; }
+.parlay[open] .chev { transform: rotate(-135deg) translateY(-1px); }
+@media (prefers-reduced-motion: reduce) { .chev { transition: none; } }
 .phead { padding: 14px 16px 12px; display: grid; gap: 10px; border-bottom: 1px solid var(--line); }
-.prow { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.prow { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.prow .ptitle { min-width: 0; }
 .ptitle { font: 700 22px/1.05 var(--display); text-transform: uppercase; letter-spacing: .01em; margin: 0; }
 .ptitle .odds { color: var(--accent); margin-left: 6px; }
 .pmeta { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
@@ -135,7 +138,6 @@ footer { color: var(--muted); font-size: 12px; text-align: center; }
     <h1>Parlay <span>Board</span></h1>
     <div class="updated"><i class="dot" id="dot"></i><span id="updated" class="num">Loading scores…</span><button class="refresh" id="refresh" type="button">Refresh</button></div>
   </header>
-  <section class="summary" id="summary"></section>
   <div id="err"></div>
   <main id="parlays" class="wrap" style="padding:0"></main>
   <footer>Scores from ESPN. Refreshes every 30 s while a game is live, every 2 min otherwise. Free picks pay winnings only.</footer>
@@ -273,27 +275,31 @@ function legHtml(leg, i) {
   </div>`;
 }
 
+// Which parlays are expanded, remembered per browser.
+let openSet = new Set();
+try { openSet = new Set(JSON.parse(localStorage.getItem("open") || "[]")); } catch (e) {}
+
 function render() {
   const all = PARLAYS.map(parlayInfo);
-  $("summary").innerHTML = PARLAYS.map((p, k) => {
-    const a = all[k];
-    return `<a class="sum" href="#p${k}"><span class="label">${esc(p.title)}</span>
-      <span class="big num">${a.won}/${p.legs.length} <span class="pill ${a.status}">${{ live: "Live", pending: "Pending", dead: "Dead", won: "Cashed" }[a.status]}</span></span>
-      <span class="sub num">${a.status === "dead" ? "No payout" : `Pays ${money(p.toPay)} · ${(a.chance * 100).toFixed(0)}% est.`}</span></a>`;
-  }).join("");
   $("parlays").innerHTML = PARLAYS.map((p, k) => {
     const a = all[k];
-    return `<article class="parlay ${a.status}" id="p${k}">
-      <div class="phead">
+    return `<details class="parlay ${a.status}" id="p${k}" data-key="${esc(p.title)}" ${openSet.has(p.title) ? "open" : ""}>
+      <summary class="phead">
         <div class="prow"><h2 class="ptitle">${esc(p.title)}<span class="odds num">${esc(p.odds)}</span></h2>
-          <span class="pill ${a.status}">${{ live: "Live", pending: "Open", dead: "Dead", won: "Cashed" }[a.status]}</span></div>
+          <span class="right"><span class="pill ${a.status}">${{ live: "Live", pending: "Open", dead: "Dead", won: "Cashed" }[a.status]}</span><span class="chev" aria-hidden="true"></span></span></div>
         <div class="segs" style="--n:${p.legs.length}">${a.infos.map(i => `<span class="seg ${i.state}"></span>`).join("")}</div>
-        <div class="pmeta num"><span>Legs hit <b>${a.won} of ${p.legs.length}</b></span><span>Wager <b>${esc(p.wager)}</b></span><span>To pay <b class="pay">${money(p.toPay)}</b></span>${a.status === "dead" ? "" : `<span>Chance to cash <b>${(a.chance * 100).toFixed(0)}%</b> est.</span>`}${p.ref ? `<span>Pick ID <b>${esc(p.ref)}</b></span>` : ""}</div>
-      </div>
+        <div class="pmeta num"><span>Legs hit <b>${a.won} of ${p.legs.length}</b></span><span>To pay <b class="pay">${a.status === "dead" ? "—" : money(p.toPay)}</b></span>${a.status === "dead" ? "" : `<span>Chance to cash <b>${(a.chance * 100).toFixed(0)}%</b> est.</span>`}<span>Wager <b>${esc(p.wager)}</b></span>${p.ref ? `<span>Pick ID <b>${esc(p.ref)}</b></span>` : ""}</div>
+      </summary>
       ${p.legs.map((l, j) => legHtml(l, a.infos[j])).join("")}
-    </article>`;
+    </details>`;
   }).join("");
 }
+$("parlays").addEventListener("toggle", e => {
+  const key = e.target.dataset?.key;
+  if (!key) return;
+  e.target.open ? openSet.add(key) : openSet.delete(key);
+  try { localStorage.setItem("open", JSON.stringify([...openSet])); } catch (err) {}
+}, true);
 
 let timer, loadedOnce = false;
 async function refresh() {
